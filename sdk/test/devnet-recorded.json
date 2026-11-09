@@ -1,0 +1,21 @@
+{
+  "_about": "Figures the Hokori contracts produced on a local devnet in two recorded runs (13 Oct 2026): the supply the factory minted, the dev buy's tokens, the cost of buying out the whole curve in a launch, and the pool's graduation seed. The tests check the SDK's arithmetic against them.",
+  "devnet-2026-10-13.json": {
+    "supply": "999986218069608574091572237",
+    "devTokens": "34277831558567279767666989",
+    "closeCost": "85863999047278790045",
+    "seed": {
+      "x": "204817151071761416590310796",
+      "y": "84155305466237942123"
+    }
+  },
+  "devnet-69k-2026-10-13.json": {
+    "supply": "999986218069608574091333196",
+    "devTokens": "41918353117872986972160826",
+    "closeCost": "69696969696969696969699",
+    "seed": {
+      "x": "204817151071761416589003335",
+      "y": "68310000000000000000002"
+    }
+  }
+}

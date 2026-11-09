@@ -1,0 +1,43 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  sdk-and-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: SDK
+        working-directory: sdk
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run pack:check
+      - name: MCP server
+        working-directory: mcp
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run pack:check
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: software-mansion/setup-scarb@v1
+        with:
+          scarb-version: "2.18.0"
+      - uses: foundry-rs/setup-snfoundry@v3
+        with:
+          starknet-foundry-version: "0.64.1"
+      - name: Build and test
+        working-directory: contracts
+        run: |
+          scarb build
+          snforge test

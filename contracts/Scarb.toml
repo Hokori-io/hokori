@@ -1,0 +1,39 @@
+[package]
+name = "launchpad"
+version = "0.1.0"
+edition = "2024_07"
+cairo-version = "2.18.0"
+description = "Hokori, a launchpad on Starknet: coins launch on a bonding curve and graduate into a permanent Ekubo pool"
+
+[dependencies]
+starknet = "2.18.0"
+openzeppelin_token = "4.0.1"
+openzeppelin_interfaces = "2.2.0"
+openzeppelin_security = "4.0.1"
+
+[dev-dependencies]
+snforge_std = "0.64.1"
+assert_macros = "2.18.0"
+
+[[target.starknet-contract]]
+sierra = true
+casm = true   # compiled classes, needed to declare on a network
+
+[scripts]
+test = "snforge test"
+
+[tool.scarb]
+allow-prebuilt-plugins = ["snforge_std"]
+
+# Graduation tests run against the real Ekubo Core on forked networks at pinned blocks (pinned, so snforge caches
+# the reads). snforge 0.64 needs JSON-RPC 0.10.x: publicnode serves it at the root path.
+[[tool.snforge.fork]]
+name = "SEPOLIA"
+url = "https://starknet-sepolia-rpc.publicnode.com"
+block_id.number = "16545000"
+
+[[tool.snforge.fork]]
+name = "MAINNET"
+url = "https://starknet-rpc.publicnode.com"
+block_id.number = "16340000"
+

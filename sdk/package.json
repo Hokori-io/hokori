@@ -1,0 +1,38 @@
+{
+  "name": "@hokoridotio/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hokori launchpad on Starknet: exact arithmetic, unsigned calls, event decoding and market data for apps, bots and agents",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "pack:check": "node scripts/pack-check.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hokori-io/hokori.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/Hokori-io/hokori/tree/main/sdk#readme",
+  "bugs": "https://github.com/Hokori-io/hokori/issues"
+}

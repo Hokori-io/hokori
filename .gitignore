@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+.snfoundry_cache/
+*.log
+*.tsbuildinfo
+.env
+.env.*
+*.key
+*.pem
+.hokori-export

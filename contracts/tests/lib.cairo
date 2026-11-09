@@ -1,0 +1,10 @@
+mod common;
+mod test_attacks;
+mod test_factory;
+mod test_fee_distribution;
+mod test_graduation;
+mod test_launch_window;
+mod test_rules;
+mod test_vectors;
+mod test_zec;
+mod test_btc;

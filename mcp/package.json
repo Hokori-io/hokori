@@ -1,0 +1,36 @@
+{
+  "name": "@hokoridotio/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hokori for AI agents: an MCP server (stdio) to read the market, quote trades and prepare unsigned calls on Starknet",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "hokori-mcp": "./server.ts"
+  },
+  "scripts": {
+    "start": "node server.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "pack:check": "node scripts/pack-check.mjs"
+  },
+  "dependencies": {
+    "@hokoridotio/sdk": "file:../sdk",
+    "starknet": "10.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hokori-io/hokori.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://github.com/Hokori-io/hokori/tree/main/mcp#readme",
+  "bugs": "https://github.com/Hokori-io/hokori/issues"
+}
