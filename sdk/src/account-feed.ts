@@ -8,7 +8,7 @@
  * coin and never traded one: `found` is false and the lists are empty. Anything that can't be used (missing, stale, an
  * HTTP error, a bad file, a timeout) throws PublishedUnavailable and keeps what was last read.
  */
-import { DATA_TIMEOUT_MS, PublishedUnavailable, acceptsFactories, freshness, type FactoryMatch } from "./data-feed.ts";
+import { DATA_TIMEOUT_MS, PublishedUnavailable, acceptsFactories, followsFactory, freshness, servedBeyond, type FactoryMatch } from "./data-feed.ts";
 import { STRK_CURRENCY, currencyFromJson, type Currency } from "./currency.ts";
 import type { Trade } from "./trades.ts";
 
@@ -85,6 +85,21 @@ function payeeOf(p: Json): AccountPayee {
   return { token: p.token, name: p.name.slice(0, 64), symbol: p.symbol.slice(0, 32), launchTime: p.launchTime, shareBps: p.shareBps, payees: p.payees };
 }
 
+/**
+ * Which of an account file's coins a reader keeps: every one when the service follows only launch
+ * factories the reader follows (no other launchpad's coin can be in it); otherwise those the file's `coinFactories` map
+ * gives a followed factory. A file that would need the map and has none can't be scoped: refused.
+ */
+function accountScope(j: Json, o: { factory?: string; factories?: string[]; match?: FactoryMatch }): ((token: string) => boolean) | null {
+  if (!servedBeyond(j, o)) return null;
+  const map = j.coinFactories;
+  if (!map || typeof map !== "object" || Array.isArray(map))
+    throw new PublishedUnavailable("the market data follows launch factories this reader doesn't, and doesn't say which of the account's coins are whose");
+  const factoryOf = new Map<string, unknown>();
+  for (const [token, factory] of Object.entries(map as Record<string, unknown>)) { try { factoryOf.set(canon(token), factory); } catch { /* not an address */ } }
+  return token => followsFactory(factoryOf.get(canon(token)), o);
+}
+
 export function createPublishedAccount(o: { url: string; address: string; factory?: string; factories?: string[]; match?: FactoryMatch; chainId?: string; fetcher?: typeof fetch; now?: () => number;
   timeoutMs?: number }) {
   const fetcher = o.fetcher ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
@@ -143,16 +158,21 @@ export function createPublishedAccount(o: { url: string; address: string; factor
         if (j.updatedAt < publishedAt) return false;   // an older publication than the one held (caches): read again next time
         if (!Array.isArray(j.holdings) || !Array.isArray(j.trades) || !Number.isSafeInteger(j.tradeCount) || j.tradeCount < j.trades.length)
           throw new PublishedUnavailable("invalid account data");
-        const nextHoldings = (j.holdings as Json[]).map(holdingOf), nextTrades = (j.trades as Json[]).map(t => tradeOf(t, address));
+        // Only the coins of the launch factories this reader follows, in every list and count.
+        const keep = accountScope(j, o);
+        const scoped = <T extends { token: string }>(list: T[]) => (keep ? list.filter(x => keep(x.token)) : list);
+        const nextHoldings = scoped((j.holdings as Json[]).map(holdingOf)), nextTrades = scoped((j.trades as Json[]).map(t => tradeOf(t, address)));
         // Files from before 17 Oct 2026 have neither list.
-        const nextPositions = Array.isArray(j.positions) ? (j.positions as Json[]).map(positionOf) : [], nextLaunched = Array.isArray(j.launched) ? (j.launched as Json[]).map(launchOf) : [];
-        const nextPayees = Array.isArray(j.payeeOf) ? (j.payeeOf as Json[]).map(payeeOf) : [];   // files from before 27 Oct 2026 have none
-        const nextCurrencies = currenciesOf(j.currencies);
+        const nextPositions = scoped(Array.isArray(j.positions) ? (j.positions as Json[]).map(positionOf) : []), nextLaunched = scoped(Array.isArray(j.launched) ? (j.launched as Json[]).map(launchOf) : []);
+        const nextPayees = scoped(Array.isArray(j.payeeOf) ? (j.payeeOf as Json[]).map(payeeOf) : []);   // files from before 27 Oct 2026 have none
+        const nextCurrencies = keep ? Object.fromEntries(Object.entries(currenciesOf(j.currencies)).filter(([t]) => keep(t))) : currenciesOf(j.currencies);
+        // The account's trade count across the kept coins: each position's buys and sells (every traded coin has one).
+        const nextTradeCount = keep ? (Array.isArray(j.positions) ? nextPositions.reduce((n, p) => n + p.buys + p.sells, 0) : nextTrades.length) : j.tradeCount as number;
         const text = (l: unknown) => JSON.stringify(l, (_, v) => (typeof v === "bigint" ? String(v) : v));
-        let changed = !found || text(nextHoldings) !== text(holdings) || text(nextTrades) !== text(trades) || j.tradeCount !== tradeCount
+        let changed = !found || text(nextHoldings) !== text(holdings) || text(nextTrades) !== text(trades) || nextTradeCount !== tradeCount
           || text(nextPositions) !== text(positions) || text(nextLaunched) !== text(launched) || text(nextPayees) !== text(payees)
           || text(nextCurrencies) !== text(currencies);
-        if (changed) { holdings = nextHoldings; trades = nextTrades; positions = nextPositions; launched = nextLaunched; payees = nextPayees; currencies = nextCurrencies; tradeCount = j.tradeCount; }
+        if (changed) { holdings = nextHoldings; trades = nextTrades; positions = nextPositions; launched = nextLaunched; payees = nextPayees; currencies = nextCurrencies; tradeCount = nextTradeCount; }
         found = true; publishedAt = j.updatedAt; atBlock = status.indexedBlock; statusAt = status.lastSuccessAt;
         return changed;
       } catch (e) {

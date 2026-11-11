@@ -18,6 +18,9 @@ export * from "./candles.ts";
 export * from "./market-stats.ts";
 export * from "./selectors.ts";
 export * from "./orders.ts";
+export * from "./limit-orders.ts";
+// Who made a trade routed through Hokori's TradeAdapter (every reader of trades needs it once the adapter is live).
+export * from "./routed.ts";
 export * from "./networks.ts";
 export * from "./reads.ts";
 export * from "./metadata.ts";

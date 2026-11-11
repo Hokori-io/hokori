@@ -117,8 +117,18 @@ A wallet that doesn't answer may still have sent the transaction. Save the attem
 - the wallet's refusal;
 - or the chain past the deadline the trade carries.
 
-A timeout or an unchanged nonce is never proof. Until it settles, send nothing new for that coin. The default store is
-the browser's localStorage; pass any store with `getItem`, `setItem` and `removeItem` elsewhere.
+A timeout or an unchanged nonce is never proof. Until it settles, send nothing new for that coin.
+
+The store:
+- **The default is the browser's localStorage.** Elsewhere (Node), pass a durable store with `getItem`, `setItem` and
+  `removeItem`.
+- **`saveAttempt` writes the record and reads it back.** It throws `AttemptNotKept` when it can't (no storage, or storage
+  that refuses or loses it). Don't ask the wallet then: nothing would stop the same trade being sent twice after a
+  reload or restart.
+- **`loadAttempt` never reads a store failure as "nothing pending".** It returns a guard with a `recoveryProblem` to
+  show.
+- **`memoryAttemptStore()`** keeps records only while the process runs. Pass it explicitly if that is acceptable; it
+  can't protect across a restart.
 
 ## Tests
 

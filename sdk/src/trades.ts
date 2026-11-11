@@ -10,6 +10,7 @@ import { byteArrayFromFelts } from "./address.ts";
 import { allEvents, type ChainEvent, type EventSource } from "./events.ts";
 import type { PrivacyAdapterRef } from "./networks.ts";
 import { attributed, attributeTrades, readProtectedRecords, type Attribution } from "./protected.ts";
+import { readRoutedRecords, routedAccounts, withRouted, type TradeAdapterRef } from "./routed.ts";
 
 export type Venue = "curve" | "pool";
 /** `attribution` (sdk/src/protected.ts): whose trade it is. "protected" and "unknown" trades carry the zero address as
@@ -188,7 +189,7 @@ export const senderOf = (cache: ReadonlyMap<string, string>, txHash: string) => 
  * pinned adapter (sdk/src/protected.ts).
  */
 export function createTradeLog(provider: EventSource & BlockSource & TxSource, coin: { token: string; curve: string; currency: string; core: string; priceScale?: number;
-  adapter?: string | null; adapters?: readonly PrivacyAdapterRef[] }, { concurrency = 8, startBlock = 0 } = {}) {
+  adapter?: string | null; adapters?: readonly PrivacyAdapterRef[]; tradeAdapter?: TradeAdapterRef | null }, { concurrency = 8, startBlock = 0 } = {}) {
   const times = new Map<number, number>(), senders = new Map<string, string>();
   let lastBlock = startBlock - 1, pool: string | null = null, trades: Trade[] = [];   // nothing before startBlock is read
   let partial = false;   // pool trades older than the read window, or skipped over a long gap, are missing
@@ -203,15 +204,18 @@ export function createTradeLog(provider: EventSource & BlockSource & TxSource, c
       const r = await readCoinRange(provider, { token: coin.token, curve: coin.curve, pool }, lastBlock + 1, head, { core: coin.core, currency: coin.currency });
       const events = [...r.curveEvents.map(e => [e, "curve"] as const), ...r.poolEvents.map(e => [e, "pool"] as const)];
       const pinned = coin.adapter ? (coin.adapters ?? []).filter(a => BigInt(a.address) === BigInt(coin.adapter!)) : [];
-      const [, , records] = await Promise.all([
+      const [, , records, routed] = await Promise.all([
         blockTimes(provider, events.map(([e]) => e.block_number ?? 0), times, { concurrency }),
         txSenders(provider, r.poolEvents.map(e => e.transaction_hash), senders, { concurrency }),
         events.length ? readProtectedRecords(provider, pinned, lastBlock + 1, head) : Promise.resolve([]),
+        // Trades routed through the TradeAdapter: its records name the account (routed.ts).
+        events.length ? readRoutedRecords(provider, coin.tradeAdapter ?? undefined, lastBlock + 1, head) : Promise.resolve([]),
       ]);
       const attribution = attributeTrades(events.map(([e, venue]) => ({ e, venue, coin: coin.token, adapter: coin.adapter ?? null })), records, coin.adapters);
+      const accounts = routedAccounts(events.map(([e, venue]) => ({ e, venue, coin: coin.token })), routed, coin.tradeAdapter ?? undefined);
       const add = events.map(([e, venue], i) => {
         const t = tradeFrom(e, venue, times.get(e.block_number ?? 0) ?? 0, coin.currency, venue === "pool" ? senderOf(senders, e.transaction_hash) : undefined, coin.priceScale ?? 1);
-        return t ? attributed(t, attribution[i]) : null;
+        return t ? withRouted(attributed(t, attribution[i]), accounts[i]) : null;
       }).filter((t): t is Trade => !!t);
       pool = r.pool; lastBlock = head;
       if (!r.poolComplete) partial = true;

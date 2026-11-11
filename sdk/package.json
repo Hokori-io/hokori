@@ -1,6 +1,6 @@
 {
   "name": "@hokoridotio/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Hokori launchpad on Starknet: exact arithmetic, unsigned calls, event decoding and market data for apps, bots and agents",

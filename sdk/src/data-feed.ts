@@ -70,6 +70,20 @@ export function acceptsFactories(j: { factory?: string; factories?: string[] }, 
   return covers && (typeof j.factory !== "string" || have.some(h => same(h, j.factory!)));
 }
 
+/** Whether a service follows launch factories beyond the reader's: then its files can name coins
+ *  of launchpads the reader doesn't follow, and every coin must be checked against the reader's factories. */
+export function servedBeyond(j: { factory?: string; factories?: string[] }, o: FollowedFactories): boolean {
+  const want = followed(o);
+  if (!want.length) return false;
+  const have = Array.isArray(j.factories) ? j.factories.filter(h => typeof h === "string") : typeof j.factory === "string" ? [j.factory] : [];
+  return !have.every(h => want.some(w => same(w, h)));
+}
+/** Whether a coin of launch factory `factory` (undefined: not said) is one the reader follows. */
+export function followsFactory(factory: unknown, o: FollowedFactories): boolean {
+  const want = followed(o);
+  return !want.length || (typeof factory === "string" && want.some(w => same(w, factory)));
+}
+
 /** Whether a published coin belongs to the factories a reader follows (any coin for a reader following nothing in
  *  particular, and a coin published without its factory, from a service before format 6, which named one factory). */
 export function followsCoin(c: { factory?: string }, o: FollowedFactories): boolean {
@@ -361,6 +375,11 @@ export function createPublishedTrades(o: { url: string; token: string; factory?:
         if (!j) throw new NotPublished("this coin isn't in the market data yet");
         identity(j);
         if (j.hidden === true) throw new PublishedHidden(typeof j.note === "string" && j.note ? j.note : "This coin isn't shown on Hokori.");
+        // The coin's own launch factory must be one this reader follows. A coin that doesn't say
+        // is accepted only from a service following nothing beyond the reader's factories.
+        const ownFactory = j.coin?.factory;
+        if (ownFactory !== undefined ? !followsFactory(ownFactory, o) : servedBeyond(j, o))
+          throw new PublishedUnavailable("this coin is from a launch factory this reader doesn't follow");
         if ((o.factory || o.chainId) && !same(j.coin?.token, o.token)) throw new PublishedUnavailable("the market data is for another coin");
         if (typeof j.updatedAt !== "number") throw new PublishedUnavailable("the coin's file has no publication time");
         if (j.updatedAt < publishedAt) return false;   // an older publication than the one held: read again next time

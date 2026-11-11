@@ -22,6 +22,7 @@ import {
 import type { CoinMeta } from "./metadata.ts";
 import type { PrivacyAdapterRef } from "./networks.ts";
 import { adapterFor, attributed, attributeTrades, readProtectedRecords } from "./protected.ts";
+import { readRoutedRecords, routedAccounts, withRouted, type TradeAdapterRef } from "./routed.ts";
 
 export type MarketCoin = {
   token: string; curve: string; creator: string; index: number; name: string; symbol: string;
@@ -67,6 +68,8 @@ export type FeedDeps = {
   fetchMeta: (uri: string, sha: bigint) => Promise<{ meta: CoinMeta | null }>;
   /** The network's privacy adapters (networks.ts `privacy`): their records mark protected trades (sdk/src/protected.ts). */
   adapters?: readonly PrivacyAdapterRef[];
+  /** Hokori's TradeAdapter (networks.ts `tradeAdapter`): its records credit the trades it routes to their accounts (routed.ts). */
+  tradeAdapter?: TradeAdapterRef;
 };
 /** The factories a feed follows, as given: the one, or the list. */
 export const feedFactories = (d: { factory?: string; factories?: string[] }): string[] => d.factories ?? (d.factory ? [d.factory] : []);
@@ -142,10 +145,12 @@ export function createMarketFeed(deps: FeedDeps, { pollMs = 4_000, startBlock = 
       const lockers = new Set(curves.flatMap(s => (s.pool ? [s.pool] : [])));
       const swaps = await readHokoriSwaps(provider, deps.core, lockers, poolWindow === null ? from : Math.max(from, latest - poolWindow + 1), latest);
       const staged = curves.map(s => ({ ...s, poolEvents: s.pool ? coinSwaps(swaps, s.coin.token, s.pool, s.poolFrom) : [] }));
-      const [, , records] = await Promise.all([
+      const anyTrades = staged.some(s => s.curveEvents.length || s.poolEvents.length);
+      const [, , records, routed] = await Promise.all([
         blockTimes(provider, [...launches.map(l => l.e), ...staged.flatMap(s => [...s.curveEvents, ...s.poolEvents])].map(e => e.block_number ?? 0), times),
         txSenders(provider, staged.flatMap(s => s.poolEvents.map(e => e.transaction_hash)), senders),
-        staged.some(s => s.curveEvents.length || s.poolEvents.length) ? readProtectedRecords(provider, deps.adapters, from, latest) : Promise.resolve([]),
+        anyTrades ? readProtectedRecords(provider, deps.adapters, from, latest) : Promise.resolve([]),
+        anyTrades ? readRoutedRecords(provider, deps.tradeAdapter, from, latest) : Promise.resolve([]),
       ]);
       const time = (e: ChainEvent) => times.get(e.block_number ?? 0) ?? 0;
 
@@ -158,10 +163,11 @@ export function createMarketFeed(deps: FeedDeps, { pollMs = 4_000, startBlock = 
         const adapter = adapterFor(deps.adapters, coin.factory ?? factories[factories.length - 1]);
         const events = [...curveEvents.map(e => ({ e, venue: "curve" as const })), ...poolEvents.map(e => ({ e, venue: "pool" as const }))];
         const attribution = attributeTrades(events.map(x => ({ ...x, coin: coin.token, adapter })), records, deps.adapters);
+        const accounts = routedAccounts(events.map(x => ({ ...x, coin: coin.token })), routed, deps.tradeAdapter);
         events.forEach(({ e, venue }, i) => {
           const t = tradeFrom(e, venue, time(e), currencyOf(coin), venue === "pool" ? senderOf(senders, e.transaction_hash) : undefined, scale);
           if (!t) return;
-          add.push(attributed(t, attribution[i]));
+          add.push(withRouted(attributed(t, attribution[i]), accounts[i]));
           if (venue === "curve") coin.t = curveTAfter(e);
         });
         coin.pool = pool;

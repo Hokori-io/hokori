@@ -70,6 +70,28 @@ const canon = (a: string) => BigInt(a).toString(16);
 const keyOf = (chainId: string, account: string, coin: string) => `hokori.trade.v1:${canon(chainId)}:${canon(account)}:${canon(coin)}`;
 const storage = (): Store | null => { try { return (globalThis as { localStorage?: Store }).localStorage ?? null; } catch { return null; } };
 
+/**
+ * A trade request's record couldn't be kept (no storage, or storage refused or lost it). Thrown by `saveAttempt`, which
+ * is called before the wallet is asked: nothing may be signed then, since after a reload or restart nothing would stop
+ * the same trade being sent twice. Thrown by `addCancelled` too: the request then stays the active one, never in neither.
+ */
+export class AttemptNotKept extends Error {}
+const NOT_KEPT = "The trade request's record couldn't be saved, so it must not be signed: after a reload or restart nothing would stop it being sent twice";
+/** A store that keeps records only while this process runs, for a consumer without browser storage (Node) that
+ *  accepts it: it can't protect anything across a reload or a restart. Pass it explicitly; it is never the default. */
+export function memoryAttemptStore(): AttemptStore {
+  const m = new Map<string, string>();
+  return { getItem: k => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v); }, removeItem: k => { m.delete(k); } };
+}
+/** Writes `value` under `key` and reads it back; throws AttemptNotKept when it isn't kept exactly. */
+function keep(store: Store | null, key: string, value: string): void {
+  if (!store) throw new AttemptNotKept(`${NOT_KEPT} (no storage here: pass a durable store, or memoryAttemptStore() knowingly)`);
+  let back: string | null;
+  try { store.setItem(key, value); back = store.getItem(key); }
+  catch (e) { throw new AttemptNotKept(`${NOT_KEPT} (${(e as Error)?.message ?? e})`); }
+  if (back !== value) throw new AttemptNotKept(`${NOT_KEPT} (it didn't read back)`);
+}
+
 /** A saved attempt, checked field by field; throws if it can't be read safely or belongs to another scope. */
 function parseAttempt(value: unknown, chainId: string, account: string, coin: string): TradeAttempt {
   const saved = value as TradeAttempt & { format?: number };
@@ -97,21 +119,29 @@ function parseAttempt(value: unknown, chainId: string, account: string, coin: st
   return attempt;
 }
 
+/** The guard a record stands for when it can't be read: never taken as "nothing pending". */
+const unreadable = (chainId: string, account: string, coin: string, recoveryProblem: string): TradeAttempt => ({ chainId, account, coin, target: coin,
+  venue: "curve", side: "buy", amount: "0", deadline: 0, fromBlock: 0, nonceBefore: "0", startedAt: 0, recoveryProblem });
+
+/** The saved trade request for (chain, account, coin), or null when there is none. A store that fails to answer is not
+ *  "none": the guard stands, with a recovery problem to show. (No store at all: nothing can have been saved there.) */
 export function loadAttempt(chainId: string, account: string, coin: string, store = storage()): TradeAttempt | null {
   let raw: string | null;
-  try { raw = store?.getItem(keyOf(chainId, account, coin)) ?? null; } catch { return null; }
+  try { raw = store?.getItem(keyOf(chainId, account, coin)) ?? null; }
+  catch { return unreadable(chainId, account, coin, "Saved trade requests couldn't be read just now. Check your wallet's activity before trading again."); }
   if (raw === null) return null;
   try {
     return parseAttempt(JSON.parse(raw), chainId, account, coin);
   } catch {
     // Keep the guard when an existing record can't be understood. A missing/invalid field isn't proof of no send.
-    return { chainId, account, coin, target: coin, venue: "curve", side: "buy", amount: "0", deadline: 0, fromBlock: 0,
-      nonceBefore: "0", startedAt: 0, recoveryProblem: "This saved trade request couldn't be read safely. Check your wallet's activity before clearing the saved request." };
+    return unreadable(chainId, account, coin, "This saved trade request couldn't be read safely. Check your wallet's activity before clearing the saved request.");
   }
 }
-export function saveAttempt(a: TradeAttempt, store = storage()) {
+/** Saves `a` and reads it back. Call it before the wallet is asked: it throws AttemptNotKept when the record isn't kept,
+ *  and then nothing may be signed. (Without browser storage, pass a durable store.) */
+export function saveAttempt(a: TradeAttempt, store = storage()): void {
   // Keep the existing key so older tabs still see the guard. The payload is versioned; unversioned records are read above.
-  try { store?.setItem(keyOf(a.chainId, a.account, a.coin), JSON.stringify({ ...a, format: 2 })); } catch { /* storage unavailable: the page still holds it */ }
+  keep(store, keyOf(a.chainId, a.account, a.coin), JSON.stringify({ ...a, format: 2 }));
 }
 /** Removes the saved attempt if it's still `a` (never a newer one saved since, by this tab or another). An unreadable
  *  record goes only when `a` is the guard standing for it (recoveryProblem), on the viewer's explicit request. */
@@ -135,23 +165,26 @@ export function loadCancelled(chainId: string, account: string, coin: string, st
   for (const item of list) { try { out.push(parseAttempt(item, chainId, account, coin)); } catch { /* unreadable entry */ } }
   return out;
 }
+/** Writes the cancelled list, throwing AttemptNotKept when it isn't kept; an empty list removes it. */
 function saveCancelled(scope: TradeAttempt, list: TradeAttempt[], store: Store | null) {
   const key = cancelledKeyOf(scope.chainId, scope.account, scope.coin);
-  try { if (list.length) store?.setItem(key, JSON.stringify(list.map(a => ({ ...a, format: 2 })))); else store?.removeItem(key); }
-  catch { /* storage unavailable: the page still follows it until it's closed */ }
+  if (list.length) keep(store, key, JSON.stringify(list.map(a => ({ ...a, format: 2 }))));
+  else try { store?.removeItem(key); } catch { /* left listed: still followed, never lost */ }
 }
-/** Moves `a` to the cancelled list (before the caller clears it as the active attempt: it's never in neither). */
+/** Moves `a` to the cancelled list (before the caller clears it as the active attempt: it's never in neither). Throws
+ *  AttemptNotKept when the list isn't kept: the caller must then leave `a` the active attempt. */
 export function addCancelled(a: TradeAttempt, store = storage()) {
   saveCancelled(a, [...loadCancelled(a.chainId, a.account, a.coin, store).filter(x => x.startedAt !== a.startedAt), a], store);
 }
-/** Updates `a` (matched by startedAt) if it's still listed: a late hash, or one found on chain. */
+/** Updates `a` (matched by startedAt) if it's still listed: a late hash, or one found on chain. Best effort: if it isn't
+ *  kept, the entry stays listed without it, still followed. */
 export function updateCancelled(a: TradeAttempt, store = storage()) {
   const list = loadCancelled(a.chainId, a.account, a.coin, store);
-  if (list.some(x => x.startedAt === a.startedAt)) saveCancelled(a, list.map(x => (x.startedAt === a.startedAt ? a : x)), store);
+  if (list.some(x => x.startedAt === a.startedAt)) try { saveCancelled(a, list.map(x => (x.startedAt === a.startedAt ? a : x)), store); } catch { /* still listed */ }
 }
-/** Removes `a` once its outcome is proven (or the wallet refused it). */
+/** Removes `a` once its outcome is proven (or the wallet refused it). Best effort: if it isn't kept, it stays listed. */
 export function removeCancelled(a: TradeAttempt, store = storage()) {
-  saveCancelled(a, loadCancelled(a.chainId, a.account, a.coin, store).filter(x => x.startedAt !== a.startedAt), store);
+  try { saveCancelled(a, loadCancelled(a.chainId, a.account, a.coin, store).filter(x => x.startedAt !== a.startedAt), store); } catch { /* still listed */ }
 }
 
 /** A wallet's refusal: the user said no, so nothing was sent. (Wallets word it differently; code 113 is the Wallet

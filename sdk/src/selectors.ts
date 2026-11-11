@@ -20,6 +20,9 @@ export const SELECTOR = {
   PayeeRegistered: "0xaf4a03b8593fa68e658e1e2f1b343d566aa4ae1eaa233c0df89021add22088",
   // The privacy adapter's record of each protected trade, read so that such a trade is credited to no account.
   ProtectedTrade: "0xe56d203b04b5d1a205d9f8bc18e7053182e0986ee8f7311aab60a472a3e067",
+  // Hokori's TradeAdapter's records of each trade it routes (one-click trading, limit orders), read to credit the account.
+  Bought: "0x20cb8131637de1953a75938db3477cc6b648e5ed255f5b3fe3f0fb9299f0afc",
+  Sold: "0x123e760cef925d0b4f685db5e1ac87aadaf1ad9f8069122a5bb03353444c386",
 } as const;
 export type EntryPoint = keyof typeof SELECTOR;
 

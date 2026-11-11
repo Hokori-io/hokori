@@ -25,6 +25,9 @@ export type HokoriNetwork = {
    *  adapter class 0x06c00f44…47a8). A trade is protected only when its coin's factory's adapter records it
    *  (protected.ts). Absent: no protected trading on this network. */
   privacy?: { pool: string; adapters: PrivacyAdapterRef[]; reviewed: PrivacyReviewed };
+  /** Hokori's TradeAdapter (one-click trading and limit orders) and its deployment block: its records credit the trades
+   *  it routes to their accounts (routed.ts). Absent until it is deployed. */
+  tradeAdapter?: { address: string; block: number };
 };
 /** What was reviewed of the privacy deployment, checked fresh before every protected signature: any other value halts
  *  protected trading ("Privacy deployment changed") until it is reviewed again. The pool's class and version, its
