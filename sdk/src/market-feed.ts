@@ -163,7 +163,7 @@ export function createMarketFeed(deps: FeedDeps, { pollMs = 4_000, startBlock = 
         const adapter = adapterFor(deps.adapters, coin.factory ?? factories[factories.length - 1]);
         const events = [...curveEvents.map(e => ({ e, venue: "curve" as const })), ...poolEvents.map(e => ({ e, venue: "pool" as const }))];
         const attribution = attributeTrades(events.map(x => ({ ...x, coin: coin.token, adapter })), records, deps.adapters);
-        const accounts = routedAccounts(events.map(x => ({ ...x, coin: coin.token })), routed, deps.tradeAdapter);
+        const accounts = routedAccounts(events.map((x, i) => ({ ...x, coin: coin.token, protected: attribution[i] === "protected" })), routed, deps.tradeAdapter);
         events.forEach(({ e, venue }, i) => {
           const t = tradeFrom(e, venue, time(e), currencyOf(coin), venue === "pool" ? senderOf(senders, e.transaction_hash) : undefined, scale);
           if (!t) return;

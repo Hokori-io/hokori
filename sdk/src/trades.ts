@@ -212,7 +212,7 @@ export function createTradeLog(provider: EventSource & BlockSource & TxSource, c
         events.length ? readRoutedRecords(provider, coin.tradeAdapter ?? undefined, lastBlock + 1, head) : Promise.resolve([]),
       ]);
       const attribution = attributeTrades(events.map(([e, venue]) => ({ e, venue, coin: coin.token, adapter: coin.adapter ?? null })), records, coin.adapters);
-      const accounts = routedAccounts(events.map(([e, venue]) => ({ e, venue, coin: coin.token })), routed, coin.tradeAdapter ?? undefined);
+      const accounts = routedAccounts(events.map(([e, venue], i) => ({ e, venue, coin: coin.token, protected: attribution[i] === "protected" })), routed, coin.tradeAdapter ?? undefined);
       const add = events.map(([e, venue], i) => {
         const t = tradeFrom(e, venue, times.get(e.block_number ?? 0) ?? 0, coin.currency, venue === "pool" ? senderOf(senders, e.transaction_hash) : undefined, coin.priceScale ?? 1);
         return t ? withRouted(attributed(t, attribution[i]), accounts[i]) : null;

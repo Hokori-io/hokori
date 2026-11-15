@@ -23,6 +23,11 @@ export const SELECTOR = {
   // Hokori's TradeAdapter's records of each trade it routes (one-click trading, limit orders), read to credit the account.
   Bought: "0x20cb8131637de1953a75938db3477cc6b648e5ed255f5b3fe3f0fb9299f0afc",
   Sold: "0x123e760cef925d0b4f685db5e1ac87aadaf1ad9f8069122a5bb03353444c386",
+  // A one-click session's transaction: the TradeAdapter's budgeted trades, after the Braavos account's own session
+  // call. Their selectors fingerprint it, so a session trade whose answer was lost is found by its calls (attempts.ts).
+  budget_buy: "0x61efcebb215e4b0b53b975568376b852fbc41c60b9beeae87c2b9457a6b4c2",
+  budget_sell: "0x14a3c7f3bdbf82bfbf51ae4606d0cc17f20f96389cb10c31d882debcf921cc6",
+  session_execute_v2: "0x1e2397d81d0f146a123a8ae3d0664e92cdd9f06eeee866a8065ff1943713587",
 } as const;
 export type EntryPoint = keyof typeof SELECTOR;
 

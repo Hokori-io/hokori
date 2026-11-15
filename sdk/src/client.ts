@@ -77,6 +77,7 @@ export function createHokori(o: { network: NetworkName | HokoriNetwork; provider
   if (!factory) throw new Error(`Hokori has no launch factory on ${network.label} yet`);
   const addresses = factories.map(f => f.address);
   const p = o.provider, gateway = o.gateway ?? "https://arweave.net/", dataUrl = o.dataUrl?.replace(/\/$/, "");
+  const privacyAdapters = network.privacy?.adapters;
   const settings = new Map<string, Promise<FactorySettings>>();   // by factory
   const key = (a: string) => BigInt(a).toString(16);
   // The provider must be on this network (checked once): a factory address means nothing on another chain.
@@ -157,15 +158,19 @@ export function createHokori(o: { network: NetworkName | HokoriNetwork; provider
     confirm: (hash: string, opts?: { intervalMs?: number; timeoutMs?: number }) => confirmTx(p, hash, opts),
     /** The live market as a store (subscribe / getState / poll): from the market-data service when `dataUrl` is set,
      *  otherwise read from the chain. Display only. */
+    // Each trade is credited as the site credits it: the TradeAdapter's records name the account a routed trade was made
+    // for, and the privacy adapters' records mark protected trades (without them a routed trade
+    // was the adapter's, and a protected one an ordinary account's).
     market: () => {
-      if (dataUrl) return createDataFeed({ url: dataUrl, factories: addresses, chainId: network.chainId, fetcher: o.fetcher });
+      if (dataUrl) return createDataFeed({ url: dataUrl, factories: addresses, chainId: network.chainId, fetcher: o.fetcher, adapters: privacyAdapters });
       const feed = createMarketFeed({ provider: p, factories: addresses, core: network.ekubo.core, loadParams: marketParams,
-        fetchMeta: (uri, sha) => fetchMetadata(uri, sha, { gateway, fetcher: o.fetcher }) }, { startBlock: historyStart(factories) });
+        fetchMeta: (uri, sha) => fetchMetadata(uri, sha, { gateway, fetcher: o.fetcher }), adapters: privacyAdapters, tradeAdapter: network.tradeAdapter },
+        { startBlock: historyStart(factories) });
       // The chain is checked before the feed's first read, whatever the feed reads first.
       return { ...feed, poll: async () => { await onNetwork(); return feed.poll(); } };
     },
     /** One coin's published trades, chart, state and holders (needs `dataUrl`). Display only. */
-    coinData: (token: string) => { if (!dataUrl) throw new Error("coinData needs a market-data service (dataUrl)"); return createPublishedTrades({ url: dataUrl, token, factories: addresses, chainId: network.chainId, fetcher: o.fetcher }); },
+    coinData: (token: string) => { if (!dataUrl) throw new Error("coinData needs a market-data service (dataUrl)"); return createPublishedTrades({ url: dataUrl, token, factories: addresses, chainId: network.chainId, fetcher: o.fetcher, adapters: privacyAdapters }); },
     /** An account's published holdings and trades (needs `dataUrl`). Display only. */
     account: (address: string) => { if (!dataUrl) throw new Error("account needs a market-data service (dataUrl)"); return createPublishedAccount({ url: dataUrl, address, factories: addresses, chainId: network.chainId, fetcher: o.fetcher }); },
   };

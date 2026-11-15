@@ -232,7 +232,9 @@ export function hokoriTools(h: HokoriClient, o: { usd?: () => Promise<UsdPrices>
             note: "receive is the expected amount at the chain's state now; pay is the most the calls spend and min_receive the least they accept, as the transaction enforces" },
           enforced: { pay_base_units: String(r.order.amount), min_receive_base_units: String(r.order.minReceive), deadline_unix: deadline },
           graduates_the_coin: r.graduates, deadline: new Date(deadline * 1000).toISOString(), calls: r.calls,
-          sign: "Send all the calls together as one multicall from the trader's account (e.g. starknet.js account.execute(calls)). Nothing has been sent." };
+          // An unsigned multicall doesn't carry its network: it's named here, and the wallet must be on it.
+          network: h.network?.label, chain_id: h.network?.chainId,
+          sign: `Send all the calls together as one multicall from the trader's account on ${h.network?.label ?? "this server's network"}${h.network ? ` (chain id ${h.network.chainId})` : ""}: the wallet must be on that network (e.g. starknet.js account.execute(calls)). Nothing has been sent.` };
       },
     },
     {

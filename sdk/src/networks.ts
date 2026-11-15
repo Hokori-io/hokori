@@ -87,6 +87,9 @@ export const NETWORKS: Record<NetworkName, HokoriNetwork> = {
       // The BTC launchpad (9 Nov 2026): strkBTC, 8 decimals; graduation at 0.12 BTC raised.
       { currency: "BTC", factories: [{ address: "0x04511f2c14c3e074f2003cb90d6390e1fd30e8b5f42ddbacf49b02edb4415c69", block: 17670134 }] },
     ],
+    // Hokori's TradeAdapter (11 Nov 2026): Quick Trade's trades and limit-order fills go through it, and its records
+    // credit each trade to the account it was made for (routed.ts).
+    tradeAdapter: { address: "0x01174610de43f973365cf79e6651d82fa6e90320e4fd3c7ab57fa03fbe46ed9f", block: 17783548 },
     // One adapter per launchpad factory (3 Nov 2026); none yet for the BTC launchpad (protected trades later).
     privacy: {
       pool: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",

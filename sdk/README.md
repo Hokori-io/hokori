@@ -36,6 +36,9 @@ const { transaction_hash } = await account.execute(prepared.calls);
 const outcome = await hokori.confirm(transaction_hash);         // accepted, then executed or reverted
 ```
 
+This trades on the testnet. Hokori's live market is on mainnet: `network: "mainnet"`, with a mainnet RPC such as
+`https://starknet-rpc.publicnode.com`. Its trades spend real funds.
+
 `prepareTrade` does what the site's trade panel does before asking a wallet:
 - it reads the coin again, and refuses a quote made for another coin;
 - it refuses a curve buy inside the launch window (buys pay 99% in the launch block and the next). `quote` prices such

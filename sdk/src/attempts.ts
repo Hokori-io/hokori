@@ -17,6 +17,10 @@
  * Cancel frees the panel for a new trade, but never forgets a request that may still go through
  * the cancelled request moves to a separate list for its network, account and coin, kept across
  * reloads, and each one is followed on its own (by its startedAt) until the same proof settles it.
+ *
+ * A trade sent through Hokori's TradeAdapter (`adapter`: a one-click session's budgeted trade) is followed the same
+ * way, by the same proof. Only where it is looked for differs: the venue's own event names the adapter, not the
+ * account, so it is found and read by the adapter's Bought or Sold record naming the account and the coin (routed.ts).
  */
 import { allEvents, type EventSource } from "./events.ts";
 import { EVENT, isHokoriSwap, swappedCurrencyFor, tradeFrom, type Trade, type Venue } from "./trades.ts";
@@ -24,6 +28,7 @@ import { checkTx, type Receipt, type ReceiptSource } from "./tx.ts";
 import { COIN_DECIMALS, STRK_CURRENCY, knownCurrency, priceScale } from "./currency.ts";
 import { decodeAccountCalls, felt, fingerprintCalls, sameCalls } from "./account-calls.ts";
 import { SELECTOR } from "./selectors.ts";
+import { parseRouted, routedAccounts, type RoutedRecord, type RoutedTradeRef } from "./routed.ts";
 
 export type TradeAttempt = {
   chainId: string; account: string; coin: string;
@@ -35,6 +40,8 @@ export type TradeAttempt = {
   deadline: number;        // unix seconds, as signed
   fromBlock: number;       // a few blocks before it was sent: where to look for its trade
   nonceBefore: string;     // the account's nonce before it was sent
+  /** The account wasn't on Starknet yet when this was sent: its wallet deploys it first (nonce 0 to 1), then sends it. */
+  newAccount?: boolean;
   startedAt: number;       // ms
   graduates?: boolean;     // a buy that takes the curve's last tokens (the curve graduates in the same call)
   /** Ordered pairs of [target, selector] and arguments (orders.ts callFingerprint), compared as decoded calls. */
@@ -47,6 +54,9 @@ export type TradeAttempt = {
    *  amounts are base units of it and its price is scaled by it. Absent from attempts saved before: STRK, then the only
    *  currency. */
   currency?: { address: string; decimals: number };
+  /** The TradeAdapter it was sent through (a one-click session's trade), if any: its records find and read it. `target`
+   *  stays the venue (the curve, or the pool's locker) and `core` the pool's Core, for the trade's own events. */
+  adapter?: string;
 };
 export type Settled =
   | { state: "open"; detail: string; hash?: string }   // `hash`: its transaction was found and isn't accepted yet
@@ -104,8 +114,9 @@ function parseAttempt(value: unknown, chainId: string, account: string, coin: st
     || !["curve", "pool"].includes(saved.venue) || !["buy", "sell"].includes(saved.side)) throw new Error("invalid attempt");
   if (saved.hash !== undefined) felt(saved.hash);
   if (saved.core !== undefined) felt(saved.core);
+  if (saved.adapter !== undefined) felt(saved.adapter);
   if (saved.fingerprint !== undefined && !fingerprintCalls(saved.fingerprint)) throw new Error("invalid calls");
-  for (const k of ["refused", "graduates"] as const) if (saved[k] !== undefined && typeof saved[k] !== "boolean") throw new Error("invalid flag");
+  for (const k of ["refused", "graduates", "newAccount"] as const) if (saved[k] !== undefined && typeof saved[k] !== "boolean") throw new Error("invalid flag");
   for (const k of ["walletError", "recoveryProblem"] as const) if (saved[k] !== undefined && typeof saved[k] !== "string") throw new Error("invalid message");
   if (saved.failedAt !== undefined && (!Number.isSafeInteger(saved.failedAt) || saved.failedAt < 0)) throw new Error("invalid failure time");
   if (saved.currency !== undefined) {
@@ -202,6 +213,7 @@ const same = (a: string, b: string) => BigInt(a) === BigInt(b);
  *  in whole currency per whole token, in the attempt's currency (a ZEC trade's was 10^10 too
  *  small); an attempt saved before currencies were recorded is STRK's, as before. */
 export function tradeInReceipt(receipt: Receipt, a: TradeAttempt, hash: string): Trade | null {
+  if (a.adapter) return routedTradeInReceipt(receipt, a, hash);
   const paid = a.currency ?? STRK_CURRENCY, scale = priceScale(paid);
   for (const e of receipt.events ?? []) {
     if (a.venue === "pool") {
@@ -217,6 +229,33 @@ export function tradeInReceipt(receipt: Receipt, a: TradeAttempt, hash: string):
     if (t) return t;
   }
   return null;
+}
+
+/**
+ * A trade sent through the TradeAdapter, in its receipt: the adapter's one record for this account, coin and side,
+ * matched by exact amounts (routed.ts) to the venue's own events (the curve's, which name the adapter, and Core's
+ * Swapped for the coin's pool). Its amounts are the record's (both legs of a buy that crossed graduation), its price the
+ * last leg's, and its trader the account. Null when the receipt doesn't prove it.
+ */
+function routedTradeInReceipt(receipt: Receipt, a: TradeAttempt, hash: string): Trade | null {
+  const paid = a.currency ?? STRK_CURRENCY, scale = priceScale(paid);
+  const events = (receipt.events ?? []).map(e => ({ ...e, transaction_hash: hash, block_number: receipt.block_number }));
+  const records = events.map(e => parseRouted(e)).filter((r): r is RoutedRecord => r !== null && same(r.adapter, a.adapter!));
+  const mine = records.filter(r => same(r.account, a.account) && same(r.coin, a.coin) && r.sell === (a.side === "sell"));
+  if (mine.length !== 1) return null;
+  const r = mine[0];
+  const refs: RoutedTradeRef[] = [];
+  for (const e of events) {
+    if (same(e.from_address, a.target) && e.keys.length > 1 && [EVENT.BUY, EVENT.SELL].some(k => same(e.keys[0], k))) refs.push({ e, venue: "curve", coin: a.coin });
+    else if (a.core && same(e.from_address, a.core) && e.keys.length > 0 && same(e.keys[0], EVENT.SWAPPED) && swappedCurrencyFor(e, a.coin) !== null) refs.push({ e, venue: "pool", coin: a.coin });
+  }
+  const who = routedAccounts(refs, records, { address: a.adapter!, block: 0 });
+  const legs = refs.filter((_, i) => typeof who[i] === "string" && same(who[i]!, a.account));
+  if (!legs.length) return null;
+  const last = legs[legs.length - 1];
+  const t = tradeFrom(last.e as Parameters<typeof tradeFrom>[0], last.venue, 0, last.venue === "pool" ? swappedCurrencyFor(last.e, a.coin)! : paid.address, a.account, scale);
+  if (!t) return null;
+  return { ...t, side: r.sell ? "sell" : "buy", tokens: r.sell ? r.amountIn : r.amountOut, currency: r.sell ? r.amountOut : r.amountIn, trader: hexOf(a.account), attribution: "account" };
 }
 const hexOf = (v: string) => "0x" + BigInt(v).toString(16).padStart(64, "0");
 
@@ -255,8 +294,11 @@ function earlierOwnTx(tx: { sender_address?: string; nonce?: string }, a: TradeA
 async function findAttemptTx(provider: AttemptSource, a: TradeAttempt, head: number): Promise<{ hash: string | null; unidentified: boolean }> {
   // Without Core's address (a pool request saved before it was recorded) its trades can't be searched: its outcome is
   // then unknown at its deadline, never "nothing traded".
-  if (a.venue === "pool" && !a.core) return { hash: null, unidentified: true };
-  const events = a.venue === "curve"
+  if (a.venue === "pool" && !a.core && !a.adapter) return { hash: null, unidentified: true };
+  // Through the adapter: its records naming this account and coin point at the candidates.
+  const events = a.adapter
+    ? await allEvents(provider, { address: a.adapter, keys: [[SELECTOR.Bought, SELECTOR.Sold], [a.account], [a.coin]], from: a.fromBlock, to: head })
+    : a.venue === "curve"
     ? await allEvents(provider, { address: a.target, keys: [[EVENT.BUY, EVENT.SELL], [a.account]], from: a.fromBlock, to: head })
     : (await allEvents(provider, { address: a.core!, keys: [[EVENT.SWAPPED]], from: a.fromBlock, to: head }))
       .filter(e => isHokoriSwap(e, a.core!, new Set([hexOf(a.target)])) && swappedCurrencyFor(e, a.coin) !== null);
@@ -281,6 +323,9 @@ const notOnChainYet = (e: unknown): boolean => {
   return /Contract not found|CONTRACT_NOT_FOUND/i.test(text) || (e as { code?: unknown })?.code === 20
     || (e as { baseError?: { code?: unknown } })?.baseError?.code === 20;
 };
+
+/** What an open attempt says when only a new account's setup has landed. */
+export const SET_UP_ONLY = "Your wallet set up your account on Starknet (a one-time first step), but this trade hasn't reached the chain. It's followed until its deadline in case your wallet still sends it; then you can trade again.";
 
 /** One look at an attempt. Throws only when the chain can't be read (the attempt stays open). */
 export async function settleAttempt(provider: AttemptSource, a: TradeAttempt): Promise<Settled> {
@@ -308,5 +353,8 @@ export async function settleAttempt(provider: AttemptSource, a: TradeAttempt): P
   try { nonce = BigInt(await provider.getNonceForAddress(a.account, "pre_confirmed")); }
   catch (e) { if (!notOnChainYet(e)) throw e; nonce = 0n; }
   const moved = nonce > BigInt(a.nonceBefore);
+  // A new account whose nonce is now exactly 1 has sent one transaction: its deployment, which a wallet sends first. The
+  // trade itself (nonce 1) hasn't reached the chain, though its wallet may still send it until the deadline.
+  if (a.newAccount && BigInt(a.nonceBefore) === 0n && nonce === 1n) return { state: "open", detail: SET_UP_ONLY };
   return { state: "open", detail: moved ? "Your account has sent a transaction since; looking for this trade." : "Nothing from your wallet yet. If it still shows the request, approve or reject it there." };
 }

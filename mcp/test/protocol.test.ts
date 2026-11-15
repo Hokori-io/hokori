@@ -3,7 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { PROTOCOL_VERSIONS, handle, serve } from "../server.ts";
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { PROTOCOL_VERSIONS, SERVER_VERSION, handle, serve } from "../server.ts";
 import type { Tool } from "../tools.ts";
 
 const tools: Tool[] = [
@@ -18,6 +21,28 @@ test("initialize: the client's protocol version if this server speaks it, else t
   assert.match(r.result.instructions, /never sign or send/);
   const newer = await handle(tools, { jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2099-01-01" } }) as { result: { protocolVersion: string } };
   assert.equal(newer.result.protocolVersion, PROTOCOL_VERSIONS[0]);
+});
+
+test("initialize names the server's own version: the package's", async () => {
+  const r = await handle(tools, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) as { result: { serverInfo: { name: string; version: string } } };
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+  assert.deepEqual(r.result.serverInfo, { name: "hokori", version: pkg.version });
+  assert.equal(SERVER_VERSION, pkg.version);
+});
+
+test("with no network set (or an empty one), the server reads mainnet", async () => {
+  for (const value of [undefined, ""]) {
+    const env: NodeJS.ProcessEnv = { ...process.env, HOKORI_DATA_URL: "", HOKORI_FACTORY: "" };
+    if (value === undefined) delete env.HOKORI_NETWORK; else env.HOKORI_NETWORK = value;
+    const child = spawn(process.execPath, [fileURLToPath(new URL("../server.ts", import.meta.url))], { env, stdio: ["pipe", "ignore", "pipe"] });
+    const line = await new Promise<string>((res, rej) => {
+      let err = "";
+      const t = setTimeout(() => rej(new Error(`no start-up line: ${err}`)), 20_000);
+      child.stderr.on("data", d => { err += d; if (err.includes("\n")) { clearTimeout(t); res(err.split("\n")[0]); } });
+    });
+    child.stdin.end(); child.kill();
+    assert.match(line, /^hokori MCP server: mainnet, /, `HOKORI_NETWORK ${value === undefined ? "unset" : "empty"}`);
+  }
 });
 
 test("tools: listed with their schemas; a call answers in text (bigints as strings); a failure is the tool's answer", async () => {
